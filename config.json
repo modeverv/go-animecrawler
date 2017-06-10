@@ -1,0 +1,5 @@
+{
+    "downloaddir": "/Users/seijiro/Downloads/video",
+    "dbfile": "crawler.db",
+    "title_regexp": ".*"
+}
