@@ -12,10 +12,10 @@ goqueryで一回叩いてみるとか、その辺を2017/06/10はするところ
 */
 
 import (
-	"encoding/json"
 	f "fmt"
 	"os"
 	"strings"
+	"encoding/json"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -35,6 +35,7 @@ type Config struct {
 	DBFILE      string `json:"dbfile"`
 	TITLEREGEXP string `json:"title_regexp"`
 }
+var cfg Config
 
 type JOB struct {
 	JOBKIND int
@@ -50,7 +51,6 @@ func loadConfig() (*Config, error) {
 		return nil, err
 	}
 	defer f.Close()
-	var cfg Config
 	err = json.NewDecoder(f).Decode(&cfg)
 	return &cfg, err
 }
@@ -60,6 +60,7 @@ func dispatcher(ch <-chan *JOB) {
 		job := <-ch
 		f.Println(job)
 	}
+
 }
 
 // 本体
@@ -68,7 +69,7 @@ func Run() int {
 	cfg, err := loadConfig()
 	if err != nil {
 		f.Println("config load error", err)
-		os.Exit(1)
+		return 1
 	}
 	f.Println(cfg)
 
@@ -80,6 +81,7 @@ func Run() int {
 	doc, err := goquery.NewDocument(StartURL)
 	if err != nil {
 		f.Println("url scraping fail:", StartURL)
+		return 1
 	}
 	doc.Find(".Top_info div ul li a").Each(func(_ int, s *goquery.Selection) {
 		title, _ := s.Attr("title")
