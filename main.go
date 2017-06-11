@@ -15,7 +15,7 @@ DB入れた。10分でできたねー
 5.3秒(安全のためにDBのオープンクローズを毎回しているのでそのあたりが
 重いのだろう。
 それでもこの値はめちゃくちゃすばらしい。
-mapへの読み書きがどうじに成る問題はやはり捨て置くことは出来ないのでどうにかすることにした
+map/DBへの読み書きが同時に成る問題はやはり捨て置くことは出来ないのでmutexでlockした。
 */
 
 import (
@@ -315,8 +315,12 @@ func convertMedirUrl(u string, key string, client *http.Client) string {
 	return ux
 }
 
+// DBのmutex
+var DBlock = sync.RWMutex{}
 // DBインサート
 func (job *JOB) InsertToDB(filepath string) {
+	DBlock.Lock()
+	defer DBlock.Unlock()
 	db, err := sql.Open("sqlite3", cfg.DBFILE)
 	defer db.Close()
 	if err != nil {
@@ -467,7 +471,7 @@ func setupDB() {
 			if err != nil {
 				panic(err)
 			}
-			PageMap[u] = true
+			setPMap(u)
 		}
 	}
 }
