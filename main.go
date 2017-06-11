@@ -18,11 +18,13 @@ DB入れた。10分でできたねー
 */
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	f "fmt"
-	"github.com/PuerkitoBio/goquery"
-	_ "github.com/mattn/go-sqlite3"
+	"io/ioutil"
+	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"os/exec"
@@ -30,28 +32,37 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"github.com/PuerkitoBio/goquery"
+	_ "github.com/mattn/go-sqlite3"
 )
 
+// スクレイピングスタートURL
 const StartURL = "http://youtubeanisoku1.blog106.fc2.com/"
+// コンフィグファイル
 const Configfile = "config.json"
+// SQL(インサート)
 const InsertSQL = `insert into crawler(name, path, url) values(?, ?, ?)`
 
+// ジョブ種類
 const (
-	ANISOKUTOP int = iota
-	KOUSINPAGE
-	KOBETUPAGE
-	HIMADOSEARCH
-	HIMADOVIDEO
+	JOBANISOKUTOP   int = iota
+	JOBKOUSINPAGE
+	JOBKOBETUPAGE
+	JOBHIMADOSEARCH
+	JOBHIMADOVIDEO
 )
 
+// 設定 struct
 type Config struct {
 	DonloadDir  string `json:"downloaddir"`
 	DBFILE      string `json:"dbfile"`
 	TITLEREGEXP string `json:"title_regexp"`
 }
 
+// 設定
 var cfg Config
 
+// JOB struct
 type JOB struct {
 	JOBKIND int
 	URL     string
@@ -61,24 +72,23 @@ type JOB struct {
 
 func (job *JOB) Dispacher() {
 	switch job.JOBKIND {
-	case ANISOKUTOP:
+	case JOBANISOKUTOP:
 		wg.Add(1)
 		go job.AnisokuTop()
-	case KOUSINPAGE:
+	case JOBKOUSINPAGE:
 		wg.Add(1)
 		go job.KousinPage()
-	case KOBETUPAGE:
+	case JOBKOBETUPAGE:
 		wg.Add(1)
 		go job.KobetuPage()
-	case HIMADOSEARCH:
+	case JOBHIMADOSEARCH:
 		wg.Add(1)
 		go job.HimadoSearch()
-	case HIMADOVIDEO:
+	case JOBHIMADOVIDEO:
 		wg.Add(1)
 		go job.HimadoVideo()
 	default:
 	}
-
 }
 
 // トップページのスクレイピング
@@ -93,7 +103,7 @@ func (job *JOB) AnisokuTop() {
 		title, _ := s.Attr("title")
 		if strings.Contains(title, "更新状況") {
 			u, _ := s.Attr("href")
-			JobCh <- &JOB{KOUSINPAGE, u, "", ""}
+			JobCh <- &JOB{JOBKOUSINPAGE, u, "", ""}
 		}
 	})
 }
@@ -101,6 +111,7 @@ func (job *JOB) AnisokuTop() {
 // 更新ページのスクレイピング
 func (job *JOB) KousinPage() {
 	defer wg.Done()
+
 	doc, err := goquery.NewDocument(job.URL)
 	if err != nil {
 		f.Println("kousinpage error", job.URL)
@@ -112,31 +123,37 @@ func (job *JOB) KousinPage() {
 			return
 		}
 		title, _ := s.Attr("title")
+		// タイトルがあるaは対象外でOK
 		if title != "" {
 			return
 		}
-		JobCh <- &JOB{KOBETUPAGE, href, "", ""}
+		JobCh <- &JOB{JOBKOBETUPAGE, href, "", ""}
 	})
 }
 
 // 個別ページのスクレイピング
 func (job *JOB) KobetuPage() {
 	defer wg.Done()
+
 	doc, err := goquery.NewDocument(job.URL)
 	if err != nil {
 		f.Println("kobetupage error", job.URL)
 		return
 	}
+
+	// タイトル取得
 	var title string
 	doc.Find("title").Each(func(_ int, s *goquery.Selection) {
 		title = s.Text()
 		title = cleanupValue(title)
 	})
 
+	// タイトルが取得対象でなあい場合はreturn
 	if !TitleRegexp.MatchString(title) {
 		return
 	}
 
+	// 取得対象タイトルマップにあればreturnなければセット
 	_, ok := TitleMap[title]
 	if ok {
 		return
@@ -144,8 +161,10 @@ func (job *JOB) KobetuPage() {
 		TitleMap[title] = true
 	}
 
-	//f.Println("DO:", title)
+	// このタイトルについて取得します
+	f.Println("DO:", title)
 
+	// ひまわりのURL探してジョブにする
 	found := false
 	doc.Find("a").Each(func(_ int, s *goquery.Selection) {
 		if found {
@@ -157,7 +176,7 @@ func (job *JOB) KobetuPage() {
 		}
 		//一つ見つかればOK
 		if !found {
-			JobCh <- &JOB{HIMADOSEARCH, href, title, ""}
+			JobCh <- &JOB{JOBHIMADOSEARCH, href, title, ""}
 			found = true
 		}
 	})
@@ -166,6 +185,7 @@ func (job *JOB) KobetuPage() {
 // ひまわり検索ページ
 func (job *JOB) HimadoSearch() {
 	defer wg.Done()
+
 	doc, err := goquery.NewDocument(job.URL)
 	if err != nil {
 		f.Println("himadosearch error", job.URL)
@@ -182,6 +202,7 @@ func (job *JOB) HimadoSearch() {
 			return
 		}
 		href = "http://himado.in" + href
+
 		// 再取得制御
 		_, exist := PageMap[href]
 		if exist {
@@ -193,7 +214,7 @@ func (job *JOB) HimadoSearch() {
 			return
 		}
 		episode = cleanupValue(episode)
-		JobCh <- &JOB{HIMADOVIDEO, href, job.TITLE, episode}
+		JobCh <- &JOB{JOBHIMADOVIDEO, href, job.TITLE, episode}
 		count++
 	})
 }
@@ -201,33 +222,60 @@ func (job *JOB) HimadoSearch() {
 // ひまわりビデオページ
 func (job *JOB) HimadoVideo() {
 	defer wg.Done()
-	doc, err := goquery.NewDocument(job.URL)
+
+	//ここからはcookieがいる模様なので泥臭くいく
+	jar, err := cookiejar.New(nil)
 	if err != nil {
-		f.Println("himadoVideo error", job.URL)
+		f.Println("jar 作成失敗")
+	}
+	client := &http.Client{Jar: jar}
+	res, err := client.Get(job.URL)
+	if err != nil {
+		f.Println("接続失敗")
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		f.Println(res.StatusCode)
+		return
+	}
+	body, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		f.Println("himado video read failed")
 		return
 	}
 	mediaUrl := ""
-	doc.Find("script").Each(func(_ int, s *goquery.Selection) {
-		text := s.Contents().Text()
-		if text == "" {
-			return
-		}
-		texta := strings.Split(text, "\n")
-		for _, l := range texta {
-			if strings.Contains(l, "var movie_url") {
-				l = strings.TrimSpace(l)
-				l = strings.Replace(l, "var movie_url = '", "", -1)
-				l = strings.Replace(l, "';", "", -1)
-				u, err := url.PathUnescape(l)
-				if err == nil {
-					mediaUrl = u
-				}
-				break
+	key := ""
+	lines := strings.Split(string(body), "\n")
+	for _, l := range lines {
+		if strings.Contains(l, "var movie_url") {
+			l = strings.TrimSpace(l)
+			l = strings.Replace(l, "var movie_url = '", "", -1)
+			l = strings.Replace(l, "';", "", -1)
+			u, err := url.PathUnescape(l)
+			if err == nil {
+				mediaUrl = u
 			}
+			break
 		}
-	})
+	}
+	found := false
+	for _, l := range lines {
+		if strings.Contains(l, "function getKey()") {
+			found = true
+		}
+		if found && strings.Contains(l, "return") {
+			key = strings.TrimSpace(l)
+			//	return 'CyVtCVxkF2';
+			key = strings.Replace(key, "return '", "", -1)
+			key = strings.Replace(key, "';", "", -1)
+			break
+		}
+	}
 	if mediaUrl == "" {
 		return
+	}
+	if strings.HasPrefix(mediaUrl, "external:") {
+		mediaUrl = convertMedirUrl(mediaUrl, key, client)
 	}
 	fp := makeFilePath(job.TITLE, job.EPISODE)
 	if !FileIsExists(fp) {
@@ -238,17 +286,44 @@ func (job *JOB) HimadoVideo() {
 	job.DownloadVideo(mediaUrl)
 }
 
+// fc2対応
+func convertMedirUrl(u string, key string, client *http.Client) string {
+	u1 := strings.Replace(u, "external:", "", -1)
+	splitted := strings.Split(u1, "/")
+	id := splitted[len(splitted)-1]
+	endpoint := "http://himado.in/fc2/api/fc2Html5MoviePath.php?up_id=" + id + "&gk=" + key + "&test_mode=0"
+	res, err := client.Get(endpoint)
+	if err != nil {
+		f.Println("接続失敗")
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		f.Println(res.StatusCode)
+		return u
+	}
+	body, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		f.Println("convert url failed")
+		return u
+	}
+	buf := bytes.NewBuffer(body)
+	xmlstr := buf.String()
+	xmls := strings.Split(xmlstr, "</url>")
+	ux := strings.Replace(xmls[0], "<url>", "", -1)
+	f.Println(ux)
+	return ux
+}
+
 // DBインサート
 func (job *JOB) InsertToDB(filepath string) {
 	db, err := sql.Open("sqlite3", cfg.DBFILE)
 	defer db.Close()
 	if err != nil {
-		f.Println("can not open db file")
-		return
+		panic(err)
 	}
 	_, err = db.Exec(InsertSQL, job.EPISODE, filepath, job.URL)
 	if err != nil {
-		f.Println("can not open db file" , job)
+		f.Println("can not open db file", job)
 	}
 }
 
@@ -263,6 +338,7 @@ func (job *JOB) DownloadVideo(url string) {
 	cmd := "curl -# -L " + url + " | ffmpeg -threads 4 -y -i - -vcodec copy -acodec copy '" + fp + "' &"
 	f.Println(cmd)
 	exec.Command("sh", "-c", cmd).Start()
+	//exec.Command("ls", "-la")
 }
 
 // ディレクトリを確認
@@ -322,6 +398,9 @@ var JobCh chan *JOB = make(chan *JOB)
 
 // WaitGroup
 var wg sync.WaitGroup = sync.WaitGroup{}
+
+// DB
+var db *sql.DB
 
 // コンフィグを読み出す
 func loadConfig() (*Config, error) {
@@ -397,7 +476,7 @@ func Run() int {
 	go receiver(JobCh)
 
 	// 初期キック
-	JobCh <- &JOB{ANISOKUTOP, StartURL, "", ""}
+	JobCh <- &JOB{JOBANISOKUTOP, StartURL, "", ""}
 
 	// 待受
 	wg.Wait()
