@@ -11,7 +11,7 @@ goroutineもあるので並列処理をかんたんに書けるのではない�
 ちょうどよい題材かと思い、goで書き直すことにした。
 
 ## 速度
-rubyだと15分かかっていた処理が4.5秒で終わってしまった。
+rubyだと15分かかっていた処理が5秒で終わってしまった。
 すごすぎるぜGo言語
 
 ## Config
@@ -23,5 +23,5 @@ rubyだと15分かかっていた処理が4.5秒で終わってしまった。
     }
 
 downloaddir : dir file to download  
-dbfile : path to dbfile (not implemented)  
+dbfile : path to dbfile
 title_regexp : fetch file only if title matches this regexp. 

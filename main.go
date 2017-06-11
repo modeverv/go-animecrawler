@@ -3,21 +3,24 @@ package main
 /*
 実装方針
 とりまDB登録とかしちゃうのはやめておいて、
-logger作るのはやめておいて
+logger作るのはやめておいて→標準出力をうまいことする
 JSONから設定読み込んで出力するとか
 goqueryで一回叩いてみるとか、その辺を2017/06/10はするところまで
 
 チャンネルとかデータ構造とかは2017/06/11から少しずつやっていけばよろし。
-DB以外の部分はとりあえず出来た。
 めっちゃ速いwwww
 rubyだと900秒
 goだと4.5秒
+DB入れた。10分でできたねー
+5.3秒(安全のためにDBのオープンクローズを毎回しているのでそのあたりが
+重いのだろう。
+それでもこの値はめちゃくちゃすばらしい。
 */
 
 import (
+	"database/sql"
 	"encoding/json"
 	f "fmt"
-	"github.com/PuerkitoBio/goquery"
 	"net/url"
 	"os"
 	"os/exec"
@@ -25,10 +28,14 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/PuerkitoBio/goquery"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 const StartURL = "http://youtubeanisoku1.blog106.fc2.com/"
 const Configfile = "config.json"
+const InsertSQL = `insert into crawler(name, path, url) values(?, ?, ?)`
 
 const (
 	ANISOKUTOP int = iota
@@ -225,10 +232,25 @@ func (job *JOB) HimadoVideo() {
 	}
 	fp := makeFilePath(job.TITLE, job.EPISODE)
 	if !FileIsExists(fp) {
-		f.Println("already fetched - " ,job.TITLE, " - ",job.EPISODE)
+		f.Println("already fetched - ", job.TITLE, " - ", job.EPISODE)
 		return
 	}
+	job.InsertToDB(fp)
 	job.DownloadVideo(mediaUrl)
+}
+
+// DBインサート
+func (job *JOB) InsertToDB(filepath string) {
+	db, err := sql.Open("sqlite3", cfg.DBFILE)
+	defer db.Close()
+	if err != nil {
+		f.Println("can not open db file")
+		return
+	}
+	_, err = db.Exec(InsertSQL, job.EPISODE, filepath, job.URL)
+	if err != nil {
+		f.Println("can not open db file" , job)
+	}
 }
 
 // ビデオダウンロード
@@ -289,6 +311,7 @@ func cleanupValue(s string) string {
 // 多重取得回避用管理マップ(コレ、goroutine間でもOKなんでしょうか？ぱっと動かしてる感じちゃんと動いているけど
 // タイトル別多重取得回避用
 var TitleMap map[string]bool = make(map[string]bool)
+
 // ページ別多重取得回避用マップ
 var PageMap map[string]bool = make(map[string]bool)
 
@@ -301,7 +324,6 @@ var JobCh chan *JOB = make(chan *JOB)
 // WaitGroup
 var wg sync.WaitGroup = sync.WaitGroup{}
 
-
 // コンフィグを読み出す
 func loadConfig() (*Config, error) {
 	fh, err := os.Open(Configfile)
@@ -312,6 +334,39 @@ func loadConfig() (*Config, error) {
 	err = json.NewDecoder(fh).Decode(&cfg)
 
 	return &cfg, err
+}
+
+// DBの用意をする
+func setupDB() {
+	db, err := sql.Open("sqlite3", cfg.DBFILE)
+	defer db.Close()
+	if err != nil {
+		panic(err)
+	}
+	createTablesql := `
+      CREATE TABLE IF NOT EXISTS crawler(
+        id integer primary key,
+        name text,
+        path text,
+        created_at TIMESTAMP DEFAULT (DATETIME('now','localtime')),
+        url text
+      );
+	`
+	_, err = db.Exec(createTablesql)
+	if err != nil {
+		panic(err)
+	}
+	rows, err := db.Query(`select url from crawler`)
+	u := ""
+	if err != nil {
+		for rows.Next() {
+			err = rows.Scan(&u)
+			if err != nil {
+				panic(err)
+			}
+			PageMap[u] = true
+		}
+	}
 }
 
 // JOBチャネルのレシーバー
@@ -335,6 +390,9 @@ func Run() int {
 
 	// 取得タイトル制限用正規表現のコンパイル
 	TitleRegexp = regexp.MustCompile(cfg.TITLEREGEXP)
+
+	// DBの用意をする
+	setupDB()
 
 	// レシーバー
 	go receiver(JobCh)
