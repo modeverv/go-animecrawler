@@ -23,5 +23,5 @@ rubyだと15分かかっていた処理が5秒で終わってしまった。
     }
 
 downloaddir : dir file to download  
-dbfile : path to dbfile
+dbfile : path to dbfile  
 title_regexp : fetch file only if title matches this regexp. 

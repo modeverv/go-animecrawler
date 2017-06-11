@@ -21,6 +21,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	f "fmt"
+	"github.com/PuerkitoBio/goquery"
+	_ "github.com/mattn/go-sqlite3"
 	"net/url"
 	"os"
 	"os/exec"
@@ -28,9 +30,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-
-	"github.com/PuerkitoBio/goquery"
-	_ "github.com/mattn/go-sqlite3"
 )
 
 const StartURL = "http://youtubeanisoku1.blog106.fc2.com/"
