@@ -11,7 +11,7 @@ goqueryで一回叩いてみるとか、その辺を2017/06/10はするところ
 DB以外の部分はとりあえず出来た。
 めっちゃ速いwwww
 rubyだと900秒
-goだと2.3秒
+goだと4.5秒
 */
 
 import (
@@ -225,6 +225,7 @@ func (job *JOB) HimadoVideo() {
 	}
 	fp := makeFilePath(job.TITLE, job.EPISODE)
 	if !FileIsExists(fp) {
+		f.Println("already fetched - " ,job.TITLE, " - ",job.EPISODE)
 		return
 	}
 	job.DownloadVideo(mediaUrl)
@@ -234,7 +235,7 @@ func (job *JOB) HimadoVideo() {
 func (job *JOB) DownloadVideo(url string) {
 	err := os.MkdirAll(makeFileDirPath(job.TITLE), 0777)
 	if err != nil {
-		f.Println("ディレクトリ作成失敗")
+		f.Println("make directory failed")
 		return
 	}
 	fp := makeFilePath(job.TITLE, job.EPISODE)
@@ -285,9 +286,13 @@ func cleanupValue(s string) string {
 	return s
 }
 
-// 確認済み管理マップ
+// 多重取得回避用管理マップ(コレ、goroutine間でもOKなんでしょうか？ぱっと動かしてる感じちゃんと動いているけど
+// タイトル別多重取得回避用
 var TitleMap map[string]bool = make(map[string]bool)
+// ページ別多重取得回避用マップ
 var PageMap map[string]bool = make(map[string]bool)
+
+// 取得タイトル制限用正規表現
 var TitleRegexp *regexp.Regexp
 
 // JOBチャネル
@@ -295,6 +300,7 @@ var JobCh chan *JOB = make(chan *JOB)
 
 // WaitGroup
 var wg sync.WaitGroup = sync.WaitGroup{}
+
 
 // コンフィグを読み出す
 func loadConfig() (*Config, error) {
@@ -304,7 +310,7 @@ func loadConfig() (*Config, error) {
 	}
 	defer fh.Close()
 	err = json.NewDecoder(fh).Decode(&cfg)
-	TitleRegexp = regexp.MustCompile(cfg.TITLEREGEXP)
+
 	return &cfg, err
 }
 
@@ -316,7 +322,7 @@ func receiver(ch chan *JOB) {
 	}
 }
 
-// 本体
+// 処理本体
 func Run() int {
 
 	// コンフィグ読み出し
@@ -327,15 +333,21 @@ func Run() int {
 	}
 	f.Println(cfg)
 
+	// 取得タイトル制限用正規表現のコンパイル
+	TitleRegexp = regexp.MustCompile(cfg.TITLEREGEXP)
+
+	// レシーバー
 	go receiver(JobCh)
 
 	// 初期キック
 	JobCh <- &JOB{ANISOKUTOP, StartURL, "", ""}
 
+	// 待受
 	wg.Wait()
 	return 0
 }
 
+// エントリーポイント
 func main() {
 	retcode := Run()
 	os.Exit(retcode)
