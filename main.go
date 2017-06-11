@@ -15,6 +15,7 @@ DB入れた。10分でできたねー
 5.3秒(安全のためにDBのオープンクローズを毎回しているのでそのあたりが
 重いのだろう。
 それでもこの値はめちゃくちゃすばらしい。
+mapへの読み書きがどうじに成る問題はやはり捨て置くことは出来ないのでどうにかすることにした
 */
 
 import (
@@ -154,11 +155,10 @@ func (job *JOB) KobetuPage() {
 	}
 
 	// 取得対象タイトルマップにあればreturnなければセット
-	_, ok := TitleMap[title]
-	if ok {
+	if getTMap(title) {
 		return
-	} else {
-		TitleMap[title] = true
+	}else{
+		setTMap(title)
 	}
 
 	// このタイトルについて取得します
@@ -204,11 +204,12 @@ func (job *JOB) HimadoSearch() {
 		href = "http://himado.in" + href
 
 		// 再取得制御
-		_, exist := PageMap[href]
-		if exist {
+		if getPMap(href) {
 			return
+		}else{
+			setPMap(href)
 		}
-		PageMap[href] = true
+
 		episode, _ := s.Attr("title")
 		if episode == "" {
 			return
@@ -383,12 +384,36 @@ func cleanupValue(s string) string {
 	return s
 }
 
-// 多重取得回避用管理マップ(コレ、goroutine間でもOKなんでしょうか？ぱっと動かしてる感じちゃんと動いているけど
+// 回避用管理マップ
+var Tlock = sync.RWMutex{}
 // タイトル別多重取得回避用
 var TitleMap map[string]bool = make(map[string]bool)
+func getTMap(title string) bool {
+	Tlock.Lock()
+	defer Tlock.Unlock()
+	_,ok := TitleMap[title]
+	return ok
+}
+func setTMap(title string){
+	Tlock.Lock()
+	defer Tlock.Unlock()
+	TitleMap[title] = true
+}
 
-// ページ別多重取得回避用マップ
+// 多重取得回避用マップ
+var Plock = sync.RWMutex{}
 var PageMap map[string]bool = make(map[string]bool)
+func getPMap(url string) bool {
+	Plock.Lock()
+	defer Plock.Unlock()
+	_,ok :=PageMap[url]
+	return ok
+}
+func setPMap(url string) {
+	Plock.Lock()
+	defer Plock.Unlock()
+	PageMap[url] = true
+}
 
 // 取得タイトル制限用正規表現
 var TitleRegexp *regexp.Regexp
