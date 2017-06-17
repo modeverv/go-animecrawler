@@ -192,11 +192,7 @@ func (job *JOB) HimadoSearch() {
 		return
 	}
 
-	count := 0
 	doc.Find(".thumbtitle a[rel='nofollow']").Each(func(_ int, s *goquery.Selection) {
-		if count > 2 {
-			return
-		}
 		href, _ := s.Attr("href")
 		if href == "" {
 			return
@@ -216,7 +212,6 @@ func (job *JOB) HimadoSearch() {
 		}
 		episode = cleanupValue(episode)
 		JobCh <- &JOB{JOBHIMADOVIDEO, href, job.TITLE, episode}
-		count++
 	})
 }
 
