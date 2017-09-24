@@ -165,7 +165,6 @@ func (job *JOB) HimadoSearch() {
 		} else {
 			setPMap(href)
 		}
-
 		JobCh <- &JOB{JOBHIMADOVIDEO, href, job.TITLE, episode}
 	})
 }
@@ -202,11 +201,9 @@ func (job *JOB) HimadoVideo() {
 	lines := strings.Split(string(body), "\n")
 	for _, l := range lines {
 		if strings.Contains(l, "<video") {
-			f.Println("find video tag.")
 			l = strings.TrimSpace(l)
 			group := VideoTagRegExp.FindAllStringSubmatch(l, -1)
 			mediaUrl = strings.Join(group[0], "")
-			f.Println(mediaUrl)
 			found = true
 			break
 		}
@@ -219,35 +216,64 @@ func (job *JOB) HimadoVideo() {
 			if err == nil {
 				mediaUrl = u
 			}
+
 			break
 		}
 	}
 
-	if !found {
-		for _, l := range lines {
-			if strings.Contains(l, "function getKey()") {
-				found = true
-			}
-			if found && strings.Contains(l, "return") {
-				key = strings.TrimSpace(l)
-				//	return 'CyVtCVxkF2';
-				key = strings.Replace(key, "return '", "", -1)
-				key = strings.Replace(key, "';", "", -1)
-				break
-			}
+	for _, l := range lines {
+		if strings.Contains(l, "function getKey()") {
+			found = true
+		}
+		if found && strings.Contains(l, "return") {
+			key = strings.TrimSpace(l)
+			//	return 'CyVtCVxkF2';
+			key = strings.Replace(key, "return '", "", -1)
+			key = strings.Replace(key, "';", "", -1)
+			break
 		}
 	}
+
 	if mediaUrl == "" {
+		f.Println("mediaUrl is blank")
 		return
 	}
 	if strings.HasPrefix(mediaUrl, "external:") {
 		mediaUrl = convertMedirUrl(mediaUrl, key, client)
+	}
+	if mediaUrl == "" {
+		for _, l := range lines {
+			if strings.Contains(l, "ary_spare_sources") {
+				//"src":"http:\/\/dopefile.pk\/mp3embed-rfbn5pwhfaw6.mp3?","site_domain":""
+				reg := regexp.MustCompile(`"src":"(http.*?)","site_domain":(".*?")`)
+				l = strings.TrimSpace(l)
+				result := reg.FindAllStringSubmatch(l, -1)
+				ssrc := ""
+				for _, a := range result {
+					for i, ms := range a {
+						if i%3 == 0 {
+						} else if i%3 == 1 {
+							// src
+							ssrc = strings.Replace(ms, "\\", "", -1)
+						} else {
+							// domain
+							if !strings.Contains(ms, "fc2") {
+								mediaUrl = ssrc
+								break
+							}
+						}
+					}
+				}
+				break
+			}
+		}
 	}
 	fp := makeFilePath(job.TITLE, job.EPISODE)
 	if !FileIsExists(fp) {
 		f.Println("already fetched - ", job.TITLE, " - ", job.EPISODE)
 		return
 	}
+
 	job.InsertToDB(fp)
 	job.DownloadVideo(mediaUrl)
 }
@@ -258,6 +284,15 @@ func convertMedirUrl(u string, key string, client *http.Client) string {
 	splitted := strings.Split(u1, "/")
 	id := splitted[len(splitted)-1]
 	endpoint := "http://himado.in/fc2/api/fc2Html5MoviePath.php?up_id=" + id + "&gk=" + key + "&test_mode=0"
+	ux := "" //convertMediaUrlFc2(endpoint, client)
+	if ux == "" {
+		endpoint = "http://himado.in/fc2/api/fc2flvPath.php?up_id=" + id + "&ck=" + key + ""
+		ux = convertMediaUrlFc2(endpoint, client)
+	}
+	return ux
+}
+
+func convertMediaUrlFc2(endpoint string, client *http.Client) string {
 	res, err := client.Get(endpoint)
 	if err != nil {
 		f.Println("接続失敗")
@@ -265,18 +300,17 @@ func convertMedirUrl(u string, key string, client *http.Client) string {
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
 		f.Println(res.StatusCode)
-		return u
+		return ""
 	}
 	body, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		f.Println("convert url failed")
-		return u
+		return ""
 	}
 	buf := bytes.NewBuffer(body)
 	xmlstr := buf.String()
 	xmls := strings.Split(xmlstr, "</url>")
 	ux := strings.Replace(xmls[0], "<url>", "", -1)
-	f.Println(ux)
 	return ux
 }
 
