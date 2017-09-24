@@ -23,6 +23,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	f "fmt"
+	"github.com/PuerkitoBio/goquery"
+	_ "github.com/mattn/go-sqlite3"
 	"io/ioutil"
 	"net/http"
 	"net/http/cookiejar"
@@ -33,21 +35,20 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"github.com/PuerkitoBio/goquery"
-	_ "github.com/mattn/go-sqlite3"
 )
 
 // スクレイピングスタートURL
-const StartURL = "http://youtubeanisoku1.blog106.fc2.com/"
+const StartURL = "http://anipo.jp/c/schedule"
+
 // コンフィグファイル
 const Configfile = "config.json"
+
 // SQL(インサート)
 const InsertSQL = `insert into crawler(name, path, url) values(?, ?, ?)`
 
 // ジョブ種類
 const (
-	JOBANISOKUTOP   int = iota
-	JOBKOUSINPAGE
+	JOBANIPOTOP int = iota
 	JOBKOBETUPAGE
 	JOBHIMADOSEARCH
 	JOBHIMADOVIDEO
@@ -73,12 +74,9 @@ type JOB struct {
 
 func (job *JOB) Dispacher() {
 	switch job.JOBKIND {
-	case JOBANISOKUTOP:
+	case JOBANIPOTOP:
 		wg.Add(1)
-		go job.AnisokuTop()
-	case JOBKOUSINPAGE:
-		wg.Add(1)
-		go job.KousinPage()
+		go job.AnipoTop()
 	case JOBKOBETUPAGE:
 		wg.Add(1)
 		go job.KobetuPage()
@@ -93,47 +91,23 @@ func (job *JOB) Dispacher() {
 }
 
 // トップページのスクレイピング
-func (job *JOB) AnisokuTop() {
+func (job *JOB) AnipoTop() {
 	defer wg.Done()
 	doc, err := goquery.NewDocument(job.URL)
 	if err != nil {
 		f.Println("url scraping fail:", job.URL)
 		return
 	}
-	doc.Find(".Top_info div ul li a").Each(func(_ int, s *goquery.Selection) {
-		title, _ := s.Attr("title")
-		if strings.Contains(title, "更新状況") {
-			u, _ := s.Attr("href")
-			JobCh <- &JOB{JOBKOUSINPAGE, u, "", ""}
-		}
-	})
-}
-
-// 更新ページのスクレイピング
-func (job *JOB) KousinPage() {
-	defer wg.Done()
-
-	doc, err := goquery.NewDocument(job.URL)
-	if err != nil {
-		f.Println("kousinpage error", job.URL)
-		return
-	}
-	doc.Find("ul[type='square'] li a").Each(func(_ int, s *goquery.Selection) {
-		href, _ := s.Attr("href")
-		if href == "" {
-			return
-		}
-		title, _ := s.Attr("title")
-		// タイトルがあるaは対象外でOK
-		if title != "" {
-			return
-		}
-		JobCh <- &JOB{JOBKOBETUPAGE, href, "", ""}
+	doc.Find("dd.body > h3 a").Each(func(_ int, s *goquery.Selection) {
+		title := s.Text()
+		u, _ := s.Attr("href")
+		JobCh <- &JOB{JOBKOBETUPAGE, u, title, ""}
 	})
 }
 
 // 個別ページのスクレイピング
 func (job *JOB) KobetuPage() {
+	title := job.TITLE
 	defer wg.Done()
 
 	doc, err := goquery.NewDocument(job.URL)
@@ -142,14 +116,7 @@ func (job *JOB) KobetuPage() {
 		return
 	}
 
-	// タイトル取得
-	var title string
-	doc.Find("title").Each(func(_ int, s *goquery.Selection) {
-		title = s.Text()
-		title = cleanupValue(title)
-	})
-
-	// タイトルが取得対象でなあい場合はreturn
+	// タイトルが取得対象でない場合はreturn
 	if !TitleRegexp.MatchString(title) {
 		return
 	}
@@ -157,7 +124,7 @@ func (job *JOB) KobetuPage() {
 	// 取得対象タイトルマップにあればreturnなければセット
 	if getTMap(title) {
 		return
-	}else{
+	} else {
 		setTMap(title)
 	}
 
@@ -165,20 +132,11 @@ func (job *JOB) KobetuPage() {
 	f.Println("DO:", title)
 
 	// ひまわりのURL探してジョブにする
-	found := false
-	doc.Find("a").Each(func(_ int, s *goquery.Selection) {
-		if found {
-			return
-		}
-		href, _ := s.Attr("href")
-		if !strings.Contains(href, "himado.in") {
-			return
-		}
-		//一つ見つかればOK
-		if !found {
-			JobCh <- &JOB{JOBHIMADOSEARCH, href, title, ""}
-			found = true
-		}
+	doc.Find("div.d1").Each(func(_ int, s *goquery.Selection) {
+		v := url.Values{}
+		v.Set("keyword", title)
+		href := "http://himado.in/?sort=movie_id&" + v.Encode()
+		JobCh <- &JOB{JOBHIMADOSEARCH, href, title, ""}
 	})
 }
 
@@ -191,26 +149,23 @@ func (job *JOB) HimadoSearch() {
 		f.Println("himadosearch error", job.URL)
 		return
 	}
-
-	doc.Find(".thumbtitle a[rel='nofollow']").Each(func(_ int, s *goquery.Selection) {
+	doc.Find("div.thumbtitle a").Each(func(_ int, s *goquery.Selection) {
 		href, _ := s.Attr("href")
 		if href == "" {
 			return
 		}
 		href = "http://himado.in" + href
 
+		episode, _ := s.Attr("title")
+		episode = cleanupValue(episode)
+
 		// 再取得制御
 		if getPMap(href) {
 			return
-		}else{
+		} else {
 			setPMap(href)
 		}
 
-		episode, _ := s.Attr("title")
-		if episode == "" {
-			return
-		}
-		episode = cleanupValue(episode)
 		JobCh <- &JOB{JOBHIMADOVIDEO, href, job.TITLE, episode}
 	})
 }
@@ -239,10 +194,23 @@ func (job *JOB) HimadoVideo() {
 		f.Println("himado video read failed")
 		return
 	}
+
 	mediaUrl := ""
 	key := ""
+	found := false
+
 	lines := strings.Split(string(body), "\n")
 	for _, l := range lines {
+		if strings.Contains(l, "<video") {
+			f.Println("find video tag.")
+			l = strings.TrimSpace(l)
+			group := VideoTagRegExp.FindAllStringSubmatch(l, -1)
+			mediaUrl = strings.Join(group[0], "")
+			f.Println(mediaUrl)
+			found = true
+			break
+		}
+
 		if strings.Contains(l, "var movie_url") {
 			l = strings.TrimSpace(l)
 			l = strings.Replace(l, "var movie_url = '", "", -1)
@@ -254,17 +222,19 @@ func (job *JOB) HimadoVideo() {
 			break
 		}
 	}
-	found := false
-	for _, l := range lines {
-		if strings.Contains(l, "function getKey()") {
-			found = true
-		}
-		if found && strings.Contains(l, "return") {
-			key = strings.TrimSpace(l)
-			//	return 'CyVtCVxkF2';
-			key = strings.Replace(key, "return '", "", -1)
-			key = strings.Replace(key, "';", "", -1)
-			break
+
+	if !found {
+		for _, l := range lines {
+			if strings.Contains(l, "function getKey()") {
+				found = true
+			}
+			if found && strings.Contains(l, "return") {
+				key = strings.TrimSpace(l)
+				//	return 'CyVtCVxkF2';
+				key = strings.Replace(key, "return '", "", -1)
+				key = strings.Replace(key, "';", "", -1)
+				break
+			}
 		}
 	}
 	if mediaUrl == "" {
@@ -312,6 +282,7 @@ func convertMedirUrl(u string, key string, client *http.Client) string {
 
 // DBのmutex
 var DBlock = sync.RWMutex{}
+
 // DBインサート
 func (job *JOB) InsertToDB(filepath string) {
 	DBlock.Lock()
@@ -348,7 +319,7 @@ func makeFileDirPath(title string) string {
 
 // ファイルパスを作成
 func makeFilePath(title string, episode string) string {
-	return filepath.Join(cfg.DonloadDir, title, episode+".mp4")
+	return filepath.Join(cfg.DonloadDir, title, title+episode+".mp4")
 }
 
 // ファイル存在確認
@@ -379,21 +350,24 @@ func cleanupValue(s string) string {
 	s = strings.Replace(s, "?", "？", -1)
 	s = strings.Replace(s, "[", "", -1)
 	s = strings.Replace(s, "]", "", -1)
+	s = strings.Replace(s, "：", "", -1)
 
 	return s
 }
 
 // 回避用管理マップ
 var Tlock = sync.RWMutex{}
+
 // タイトル別多重取得回避用
 var TitleMap map[string]bool = make(map[string]bool)
+
 func getTMap(title string) bool {
 	Tlock.Lock()
 	defer Tlock.Unlock()
-	_,ok := TitleMap[title]
+	_, ok := TitleMap[title]
 	return ok
 }
-func setTMap(title string){
+func setTMap(title string) {
 	Tlock.Lock()
 	defer Tlock.Unlock()
 	TitleMap[title] = true
@@ -402,10 +376,11 @@ func setTMap(title string){
 // 多重取得回避用マップ
 var Plock = sync.RWMutex{}
 var PageMap map[string]bool = make(map[string]bool)
+
 func getPMap(url string) bool {
 	Plock.Lock()
 	defer Plock.Unlock()
-	_,ok :=PageMap[url]
+	_, ok := PageMap[url]
 	return ok
 }
 func setPMap(url string) {
@@ -416,6 +391,9 @@ func setPMap(url string) {
 
 // 取得タイトル制限用正規表現
 var TitleRegexp *regexp.Regexp
+
+// videoタグ取得用正規表現
+var VideoTagRegExp = regexp.MustCompile("video=\"(http.*)\"?")
 
 // JOBチャネル
 var JobCh chan *JOB = make(chan *JOB)
@@ -500,7 +478,7 @@ func Run() int {
 	go receiver(JobCh)
 
 	// 初期キック
-	JobCh <- &JOB{JOBANISOKUTOP, StartURL, "", ""}
+	JobCh <- &JOB{JOBANIPOTOP, StartURL, "", ""}
 
 	// 待受
 	wg.Wait()
