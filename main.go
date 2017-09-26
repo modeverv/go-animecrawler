@@ -35,6 +35,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 // スクレイピングスタートURL
@@ -143,7 +144,6 @@ func (job *JOB) KobetuPage() {
 // ひまわり検索ページ
 func (job *JOB) HimadoSearch() {
 	defer wg.Done()
-
 	doc, err := goquery.NewDocument(job.URL)
 	if err != nil {
 		f.Println("himadosearch error", job.URL)
@@ -152,27 +152,25 @@ func (job *JOB) HimadoSearch() {
 	doc.Find("div.thumbtitle a").Each(func(_ int, s *goquery.Selection) {
 		href, _ := s.Attr("href")
 		if href == "" {
+			f.Println("himadosearch-nohref:" + job.TITLE)
 			return
 		}
 		href = "http://himado.in" + href
-
 		episode, _ := s.Attr("title")
 		episode = cleanupValue(episode)
-
 		// 再取得制御
 		if getPMap(href) {
-			return
 		} else {
+			time.Sleep(30 * time.Millisecond)
+			JobCh <- &JOB{JOBHIMADOVIDEO, href, job.TITLE, episode}
 			setPMap(href)
 		}
-		JobCh <- &JOB{JOBHIMADOVIDEO, href, job.TITLE, episode}
 	})
 }
 
 // ひまわりビデオページ
 func (job *JOB) HimadoVideo() {
 	defer wg.Done()
-
 	//ここからはcookieがいる模様なので泥臭くいく
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -183,7 +181,7 @@ func (job *JOB) HimadoVideo() {
 	if err != nil {
 		f.Println("接続失敗")
 	}
-	defer res.Body.Close()
+	//defer res.Body.Close()
 	if res.StatusCode != 200 {
 		f.Println(res.StatusCode)
 		return
@@ -273,7 +271,6 @@ func (job *JOB) HimadoVideo() {
 		f.Println("already fetched - ", job.TITLE, " - ", job.EPISODE)
 		return
 	}
-
 	job.InsertToDB(fp)
 	job.DownloadVideo(mediaUrl)
 }
@@ -297,7 +294,7 @@ func convertMediaUrlFc2(endpoint string, client *http.Client) string {
 	if err != nil {
 		f.Println("接続失敗")
 	}
-	defer res.Body.Close()
+	//defer res.Body.Close()
 	if res.StatusCode != 200 {
 		f.Println(res.StatusCode)
 		return ""

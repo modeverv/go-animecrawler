@@ -1,5 +1,5 @@
 {
-    "downloaddir": "/Users/seijiro/Downloads/video",
-    "dbfile": "/Users/seijiro/Downloads/crawler.db",
+    "downloaddir": "/var/smb/sdc1/video",
+    "dbfile": "/home/seijiro/crawler/crawler.db",
     "title_regexp": ".*"
 }
